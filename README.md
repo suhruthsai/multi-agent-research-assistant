@@ -1,1 +1,1 @@
-# multi-agent-research-agent-
+multi-agent-research-assistant
