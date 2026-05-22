@@ -1,18 +1,189 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-::-webkit-scrollbar { width: 5px; }
-::-webkit-scrollbar-track { background: #0f172a; }
-::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+/* ── Base ────────────────────────────────────────────────────────────────── */
+* {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
 
+/* ── Scrollbar ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: #0a0f1e; }
+::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+/* ── Glassmorphism cards ────────────────────────────────────────────────── */
+.glass-card {
+  @apply bg-gray-900/60 backdrop-blur-xl border border-gray-800/50 rounded-2xl;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.glass-card-hover {
+  @apply glass-card transition-all duration-300;
+}
+.glass-card-hover:hover {
+  @apply border-indigo-500/30 shadow-lg;
+  box-shadow: 0 12px 40px rgba(99, 102, 241, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transform: translateY(-1px);
+}
+
+/* ── Gradient accents ───────────────────────────────────────────────────── */
+.gradient-text {
+  @apply bg-clip-text text-transparent;
+  background-image: linear-gradient(135deg, #818cf8, #a78bfa, #22d3ee);
+}
+
+.gradient-border {
+  position: relative;
+}
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, #818cf8, #a78bfa, #22d3ee);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+/* ── Button styles ──────────────────────────────────────────────────────── */
+.btn-primary {
+  @apply px-6 py-3 rounded-xl font-semibold text-sm transition-all duration-300;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+}
+.btn-primary:hover {
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+  transform: translateY(-1px);
+}
+.btn-primary:active {
+  transform: translateY(0);
+}
+.btn-primary:disabled {
+  @apply opacity-50 cursor-not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-danger {
+  @apply px-6 py-3 rounded-xl font-semibold text-sm transition-all duration-300;
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
+}
+.btn-danger:hover {
+  box-shadow: 0 6px 20px rgba(239, 68, 68, 0.5);
+  transform: translateY(-1px);
+}
+
+/* ── Skeleton loading ───────────────────────────────────────────────────── */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  @apply rounded-lg;
+  background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* ── Pulse glow animation ───────────────────────────────────────────────── */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 5px rgba(99, 102, 241, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.6); }
+}
+.pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* ── Fade-in animation ──────────────────────────────────────────────────── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fade-in 0.4s ease-out forwards;
+}
+
+/* ── Slide-in from right ────────────────────────────────────────────────── */
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s ease-out forwards;
+}
+
+/* ── Spin animation ─────────────────────────────────────────────────────── */
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.animate-spin-slow {
+  animation: spin-slow 3s linear infinite;
+}
+
+/* ── Source badges ───────────────────────────────────────────────────────── */
+.badge {
+  @apply px-2 py-0.5 rounded-full text-xs font-medium uppercase tracking-wider;
+}
+.badge-arxiv { @apply bg-orange-500/20 text-orange-400 border border-orange-500/30; }
+.badge-semantic_scholar { @apply bg-blue-500/20 text-blue-400 border border-blue-500/30; }
+.badge-openalex { @apply bg-emerald-500/20 text-emerald-400 border border-emerald-500/30; }
+.badge-crossref { @apply bg-amber-500/20 text-amber-400 border border-amber-500/30; }
+.badge-unknown { @apply bg-gray-500/20 text-gray-400 border border-gray-500/30; }
+
+/* ── Tab styles ─────────────────────────────────────────────────────────── */
+.tab {
+  @apply px-4 py-2.5 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer;
+  @apply text-gray-400 hover:text-gray-200 hover:bg-gray-800/50;
+}
+.tab-active {
+  @apply text-white;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.2));
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+/* ── Report content Markdown styles ─────────────────────────────────────── */
 .report-content h1 { @apply text-2xl font-bold text-white mt-6 mb-3; }
-.report-content h2 { @apply text-xl font-semibold text-indigo-300 mt-5 mb-2 border-b border-gray-800 pb-1; }
+.report-content h2 { @apply text-xl font-semibold text-indigo-300 mt-5 mb-2 pb-1; border-bottom: 1px solid rgba(99, 102, 241, 0.2); }
 .report-content h3 { @apply text-lg font-medium text-gray-200 mt-4 mb-2; }
 .report-content p  { @apply text-gray-300 leading-relaxed mb-3 text-sm; }
 .report-content ul { @apply list-disc list-inside text-gray-300 mb-3 space-y-1 text-sm; }
 .report-content ol { @apply list-decimal list-inside text-gray-300 mb-3 space-y-1 text-sm; }
+.report-content li { @apply ml-2; }
 .report-content code { @apply bg-gray-800 text-indigo-300 px-1.5 py-0.5 rounded text-xs font-mono; }
-.report-content blockquote { @apply border-l-4 border-indigo-500 pl-4 italic text-gray-400 my-3; }
+.report-content pre { @apply bg-gray-800/80 p-4 rounded-xl mb-4 overflow-x-auto text-sm; }
+.report-content blockquote { @apply border-l-4 border-indigo-500/50 pl-4 italic text-gray-400 my-3 bg-indigo-500/5 py-2 rounded-r-lg; }
 .report-content strong { @apply text-white font-semibold; }
-.report-content a { @apply text-indigo-400 underline hover:text-indigo-300; }
+.report-content a { @apply text-indigo-400 underline decoration-indigo-400/30 hover:text-indigo-300 hover:decoration-indigo-300/50 transition-colors; }
+.report-content table { @apply w-full mb-4 text-sm; }
+.report-content th { @apply text-left py-2 px-3 bg-gray-800/50 text-gray-300 font-medium border-b border-gray-700; }
+.report-content td { @apply py-2 px-3 border-b border-gray-800/50 text-gray-400; }
+
+/* ── Citation link in report ────────────────────────────────────────────── */
+.citation-link {
+  @apply text-cyan-400 cursor-pointer transition-all duration-200;
+  @apply hover:text-cyan-300 hover:underline;
+  @apply bg-cyan-400/10 px-1 rounded;
+}
+
+/* ── Progress bar ───────────────────────────────────────────────────────── */
+.progress-bar {
+  @apply h-1.5 rounded-full overflow-hidden bg-gray-800;
+}
+.progress-bar-fill {
+  @apply h-full rounded-full transition-all duration-500;
+  background: linear-gradient(90deg, #6366f1, #a78bfa, #22d3ee);
+}
+
+/* ── Status indicators ──────────────────────────────────────────────────── */
+.status-verified { @apply text-emerald-400; }
+.status-unverified { @apply text-amber-400; }
+.status-contradicted { @apply text-red-400; }

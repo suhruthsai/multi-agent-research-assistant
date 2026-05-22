@@ -1,10 +1,11 @@
 #!/bin/bash
 # Run from project root — increases WebSocket timeout to 10 minutes
 
-cd "/Users/mac/Desktop/multi agent research assisant"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 source venv/bin/activate
 
-PYTHONPATH="/Users/mac/Desktop/multi agent research assisant" \
+PYTHONPATH="$SCRIPT_DIR" \
 python -m uvicorn backend.api.main:app \
   --reload \
   --port 8000 \
