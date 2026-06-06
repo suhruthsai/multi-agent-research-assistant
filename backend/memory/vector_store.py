@@ -55,11 +55,16 @@ class VectorStore:
             return
 
         docs, ids, metas = [], [], []
+        seen_ids: set[str] = set()
         for p in papers:
             url = p.get("url", "")
             if not url:
                 continue
             pid  = url.replace("https://", "").replace("http://", "").replace("/", "_")[:63]
+            # Skip duplicates within the same batch to avoid ChromaDB DuplicateIDError
+            if pid in seen_ids:
+                continue
+            seen_ids.add(pid)
             text = f"{p['title']}\n\n{p.get('abstract', '')}"
             docs.append(text)
             ids.append(pid)
@@ -71,6 +76,9 @@ class VectorStore:
                 "source":         p.get("source", "unknown"),
                 "citation_count": str(p.get("citation_count", 0)),
             })
+
+        if not docs:
+            return
 
         embs = self._embedder.encode(docs, show_progress_bar=False).tolist()
         self.papers_col.upsert(documents=docs, ids=ids, embeddings=embs, metadatas=metas)
@@ -186,8 +194,12 @@ class VectorStore:
             return
 
         docs, ids, metas = [], [], []
+        seen_ids: set[str] = set()
         for i, chunk in enumerate(chunks):
             chunk_id = f"{chunk.get('paper_url', 'unknown')}__chunk_{i}".replace("https://", "").replace("/", "_")[:63]
+            if chunk_id in seen_ids:
+                continue
+            seen_ids.add(chunk_id)
             docs.append(chunk["text"])
             ids.append(chunk_id)
             metas.append({
@@ -197,6 +209,9 @@ class VectorStore:
                 "page":        str(chunk.get("page", 0)),
                 "chunk_index": str(i),
             })
+
+        if not docs:
+            return
 
         embs = self._embedder.encode(docs, show_progress_bar=False).tolist()
         self.chunks_col.upsert(documents=docs, ids=ids, embeddings=embs, metadatas=metas)

@@ -1,10 +1,3 @@
-"""
-All 7 specialist agents — with async timeouts, query expansion, hybrid search,
-PDF processing, knowledge graph, and fact-checking.
-
-Agents: planner → search → critic → synthesis → writer → fact_checker → hypothesis
-"""
-
 import json
 import asyncio
 import logging
