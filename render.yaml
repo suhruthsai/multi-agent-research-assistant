@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: mara-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash run_server.sh
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PORT
+        value: "8000"
+    plan: free
