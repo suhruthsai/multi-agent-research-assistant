@@ -7,6 +7,4 @@ services:
     envVars:
       - key: PYTHONUNBUFFERED
         value: "1"
-      - key: PORT
-        value: "8000"
     plan: free

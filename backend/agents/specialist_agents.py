@@ -33,12 +33,21 @@ TOP_N_FOR_CONFIDENCE     = 5
 MIN_PAPERS_FOR_SYNTHESIS = 5
 GROQ_TIMEOUT_SECONDS     = 60
 
-vs = VectorStore()
+_vs_instance: VectorStore | None = None
+
+def _get_vs() -> VectorStore:
+    """Lazy singleton — loads ML models only on first request, not at import time."""
+    global _vs_instance
+    if _vs_instance is None:
+        logger.info("[VectorStore] Initializing (loading ML models)...")
+        _vs_instance = VectorStore()
+        logger.info("[VectorStore] Ready.")
+    return _vs_instance
 
 
 def clear_vector_memory() -> None:
     """Clear stored abstracts/chunks so a new run cannot reuse unrelated papers."""
-    vs.clear()
+    _get_vs().clear()
 
 
 def _papers_text(papers: list[dict], n: int = 5) -> str:
@@ -200,14 +209,14 @@ async def search_agent(state: AgentState) -> dict:
             unique.append(p)
 
     # Step 3: Add to vector store; graph is scoped to this research run
-    vs.add_papers(unique)
+    _get_vs().add_papers(unique)
     run_kg = KnowledgeGraph()
 
     # Step 4: Hybrid search (BM25 + semantic with RRF)
-    hybrid_results = vs.hybrid_search(query, k=20)
+    hybrid_results = _get_vs().hybrid_search(query, k=20)
 
     # Step 5: Re-rank with cross-encoder
-    reranked = vs.rerank(query, hybrid_results, top_n=12)
+    reranked = _get_vs().rerank(query, hybrid_results, top_n=12)
     quality  = _filter_quality_papers(reranked)
 
     # Step 6: Build a per-query knowledge graph
@@ -249,7 +258,7 @@ async def search_agent(state: AgentState) -> dict:
     try:
         pdf_chunks = await process_papers_batch(quality, max_papers=3, timeout=45)
         if pdf_chunks:
-            vs.add_chunks(pdf_chunks)
+            _get_vs().add_chunks(pdf_chunks)
             pdf_count = len(set(c.get("paper_url", "") for c in pdf_chunks))
     except Exception as e:
         logger.warning("PDF processing failed: %s", e)
@@ -310,7 +319,7 @@ async def synthesis_agent(state: AgentState) -> dict:
     # Get deep search results from full-text chunks
     deep_context = ""
     try:
-        deep_results = vs.deep_search(state["query"], k=5)
+        deep_results = _get_vs().deep_search(state["query"], k=5)
         if deep_results:
             deep_context = f"\n\n## Detailed Excerpts from Full Papers:\n{_chunks_text(deep_results, 5)}"
     except Exception as e:
@@ -348,7 +357,7 @@ async def writer_agent(state: AgentState) -> dict:
     # Get deep search results for more detailed writing
     deep_context = ""
     try:
-        deep_results = vs.deep_search(state["query"], k=5)
+        deep_results = _get_vs().deep_search(state["query"], k=5)
         if deep_results:
             deep_context = f"\n\nDetailed excerpts:\n{_chunks_text(deep_results, 5)}"
     except Exception:
