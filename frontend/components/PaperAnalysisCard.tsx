@@ -34,13 +34,13 @@ export default function PaperAnalysisCard({ analysis, index }: Props) {
 
   // Safe normalized fields to prevent crash from malformed LLM responses
   const summaryParagraphs = (() => {
-    const s = analysis.summary;
+    const s: unknown = analysis.summary;
     if (!s) return ["No summary generated."];
+    if (Array.isArray(s)) {
+      return (s as unknown[]).filter(Boolean).map(p => String(p).trim());
+    }
     if (typeof s === "string") {
       return s.split("\n\n").filter(Boolean).map(p => p.trim());
-    }
-    if (Array.isArray(s)) {
-      return s.filter(Boolean).map(p => String(p).trim());
     }
     return [String(s).trim()];
   })();
