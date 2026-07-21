@@ -20,11 +20,10 @@ const META: Record<string, { label: string; emoji: string; color: string; desc: 
   synthesis:      { label: "Synthesis Agent",    emoji: "🧠", color: "text-purple-400", desc: "Cross-paper analysis" },
   loop_increment: { label: "Reflector",          emoji: "🔁", color: "text-orange-400", desc: "Re-evaluating confidence" },
   writer:         { label: "Writer Agent",       emoji: "✍️",  color: "text-green-400",  desc: "Generating research report" },
-  fact_checker:   { label: "Fact-Checker Agent", emoji: "✅", color: "text-emerald-400", desc: "Verifying claims" },
   hypothesis:     { label: "Hypothesis Agent",   emoji: "💡", color: "text-pink-400",   desc: "Generating novel hypotheses" },
 };
 
-const ORDER = ["planner", "search", "critic", "synthesis", "writer", "fact_checker", "hypothesis"];
+const ORDER = ["planner", "search", "critic", "synthesis", "writer", "hypothesis"];
 
 interface Props {
   steps: AgentStep[];

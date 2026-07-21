@@ -22,8 +22,8 @@ def _get_groq_client():
 
 # Model fallback list
 MODELS = [
-    "meta-llama/llama-4-scout-17b-16e-instruct",
     "llama-3.3-70b-versatile",
+    "llama-3.1-70b-versatile",
     "llama-3.1-8b-instant",
 ]
 
@@ -34,7 +34,11 @@ MIN_PAPERS_FOR_SYNTHESIS = 5
 GROQ_TIMEOUT_SECONDS     = 60
 
 vs = VectorStore()
-kg = KnowledgeGraph()
+
+
+def clear_vector_memory() -> None:
+    """Clear stored abstracts/chunks so a new run cannot reuse unrelated papers."""
+    vs.clear()
 
 
 def _papers_text(papers: list[dict], n: int = 5) -> str:
@@ -60,7 +64,7 @@ def _chunks_text(chunks: list[dict], n: int = 5) -> str:
     return "\n\n".join(lines)
 
 
-async def _groq(system: str, user: str, max_tokens: int = 1500) -> str:
+async def _groq(system: str, user: str, max_tokens: int = 1500, temperature: float = 0.2) -> str:
     """Call Groq with automatic model fallback, 60s timeout, retry on rate limit."""
     for model in MODELS:
         try:
@@ -69,7 +73,7 @@ async def _groq(system: str, user: str, max_tokens: int = 1500) -> str:
                 _get_groq_client().chat.completions.create(
                     model=model,
                     max_tokens=max_tokens,
-                    temperature=0.2,
+                    temperature=temperature,
                     messages=[
                         {"role": "system", "content": system},
                         {"role": "user",   "content": user},
@@ -87,6 +91,9 @@ async def _groq(system: str, user: str, max_tokens: int = 1500) -> str:
             if any(x in err for x in ["decommissioned", "rate_limit", "429", "529", "Rate limit"]):
                 logger.warning("[Groq] ⚠️ rate limit on %s — waiting 15s then trying next", model)
                 await asyncio.sleep(15)
+                continue
+            if any(x in err for x in ["404", "model_not_found", "does not exist", "NotFoundError"]):
+                logger.warning("[Groq] ⚠️ model not found %s — trying next", model)
                 continue
             logger.error("[Groq] ❌ unexpected error on %s: %s", model, err)
             raise
@@ -156,6 +163,9 @@ async def search_agent(state: AgentState) -> dict:
     """Search with query expansion, hybrid retrieval, re-ranking, and PDF processing."""
     query = state["query"]
 
+    if state.get("iteration", 0) == 0:
+        clear_vector_memory()
+
     # On retry iterations, augment the query
     if state.get("iteration", 0) > 0:
         query = f"{query} recent advances systematic review"
@@ -189,9 +199,9 @@ async def search_agent(state: AgentState) -> dict:
             seen.add(k)
             unique.append(p)
 
-    # Step 3: Add to vector store and build knowledge graph
+    # Step 3: Add to vector store; graph is scoped to this research run
     vs.add_papers(unique)
-    kg.add_papers(unique)
+    run_kg = KnowledgeGraph()
 
     # Step 4: Hybrid search (BM25 + semantic with RRF)
     hybrid_results = vs.hybrid_search(query, k=20)
@@ -200,28 +210,38 @@ async def search_agent(state: AgentState) -> dict:
     reranked = vs.rerank(query, hybrid_results, top_n=12)
     quality  = _filter_quality_papers(reranked)
 
-    # Step 6: Extract topics for knowledge graph
+    # Step 6: Build a per-query knowledge graph
+    run_kg.add_papers(quality)
     topic_texts = []
-    for p in quality[:5]:
-        topic_texts.append(f"- {p['title']}")
+    for i, p in enumerate(quality[:10], 1):
+        topic_texts.append(f"[{i}] {p['title']}\nAbstract: {p.get('abstract', '')[:350]}")
 
     try:
         topic_raw = await _groq(
-            "Extract 5-8 key research topics/themes from these paper titles. "
-            "Return ONLY a JSON array of short topic strings.",
+            "Extract paper-specific research topics. Return ONLY a JSON array. "
+            "Each item must be an object with keys paper_index and topics. "
+            "topics must contain 2-4 short topic strings for that paper.",
             "\n".join(topic_texts),
-            max_tokens=200,
+            max_tokens=700,
         )
-        topics = _parse_json(topic_raw)
-        if isinstance(topics, list):
-            flat_topics = [str(t) for t in topics if isinstance(t, str)]
-            for p in quality:
-                kg.add_topics(p.get("url", ""), flat_topics)
-        else:
-            flat_topics = []
+        topic_items = _parse_json(topic_raw)
+        flat_topics = []
+        for item in topic_items:
+            if not isinstance(item, dict):
+                continue
+            idx = item.get("paper_index")
+            if not isinstance(idx, int) or idx < 1 or idx > len(quality):
+                continue
+            paper_topics = [str(t) for t in item.get("topics", []) if str(t).strip()]
+            flat_topics.extend(paper_topics)
+            run_kg.add_topics(quality[idx - 1].get("url", ""), paper_topics)
+        flat_topics = sorted(set(flat_topics))
     except Exception as e:
         logger.warning("Topic extraction failed: %s", e)
         flat_topics = []
+
+    run_kg.add_citation_links_from_metadata(quality)
+    run_kg.add_similarity_links(quality)
 
     # Step 7: Process PDFs for full-text chunks (top 3 papers, async with timeout)
     pdf_chunks = []
@@ -238,6 +258,7 @@ async def search_agent(state: AgentState) -> dict:
         "papers":              quality,
         "chunks":              pdf_chunks,
         "topics":              flat_topics,
+        "graph_data":          run_kg.to_json(),
         "pdf_processed_count": pdf_count,
         "status":              "search_complete",
         "messages":            [{"role": "search_agent",
@@ -369,69 +390,7 @@ Guidelines:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 6. FACT-CHECKER AGENT — Verifies claims against source papers
-# ═══════════════════════════════════════════════════════════════════════════════
-async def fact_checker_agent(state: AgentState) -> dict:
-    """Verify claims in the report against source papers."""
-    report = state.get("report", "")
-    papers = state.get("papers", [])
-
-    if not report or not papers:
-        return {
-            "fact_check_results": [],
-            "status":             "fact_check_complete",
-            "messages":           [{"role": "fact_checker_agent",
-                                    "content": "No report to fact-check"}],
-        }
-
-    system = """You are a scientific fact-checker. Given a research report and source papers,
-identify the key factual claims in the report and verify whether each claim is 
-supported by the source papers.
-
-Return ONLY a valid JSON array. Each object must have:
-- claim: string (the specific claim from the report)
-- status: string (one of: "verified", "unverified", "contradicted")
-- evidence: string (brief explanation of supporting/contradicting evidence)
-- source_paper: string (title of the supporting paper, or "None" if unverified)
-
-Check 5-8 key claims. Focus on:
-- Specific factual assertions
-- Statistical claims or numbers
-- Attribution of findings to specific papers
-- Methodological claims"""
-
-    user = (
-        f"Report:\n{report[:2000]}\n\n"
-        f"Source Papers:\n{_papers_text(papers, 6)}"
-    )
-
-    raw     = await _groq(system, user, max_tokens=2000)
-    results = _parse_json(raw)
-
-    # Ensure proper structure
-    checked = []
-    for r in results:
-        if isinstance(r, dict) and "claim" in r:
-            checked.append({
-                "claim":        r.get("claim", ""),
-                "status":       r.get("status", "unverified"),
-                "evidence":     r.get("evidence", ""),
-                "source_paper": r.get("source_paper", "None"),
-            })
-
-    verified_count = sum(1 for c in checked if c["status"] == "verified")
-    total          = len(checked)
-
-    return {
-        "fact_check_results": checked,
-        "status":             "fact_check_complete",
-        "messages":           [{"role": "fact_checker_agent",
-                                "content": f"Verified {verified_count}/{total} claims"}],
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 7. HYPOTHESIS AGENT — Generates novel research hypotheses
+# 6. HYPOTHESIS AGENT — Generates novel research hypotheses
 # ═══════════════════════════════════════════════════════════════════════════════
 async def hypothesis_agent(state: AgentState) -> dict:
     system = """Generate 5 novel research hypotheses based on the synthesis and findings.
@@ -450,8 +409,7 @@ Return ONLY a valid JSON array. Each object must have:
     hypotheses = _parse_json(raw)
     hypotheses.sort(key=lambda h: h.get("confidence", 0), reverse=True)
 
-    # Finalize knowledge graph data
-    graph_data = kg.to_json()
+    graph_data = state.get("graph_data") or {"nodes": [], "links": [], "stats": {}}
 
     return {
         "hypotheses": hypotheses,
@@ -460,4 +418,223 @@ Return ONLY a valid JSON array. Each object must have:
         "messages":   [{"role": "hypothesis_agent",
                         "content": f"Generated {len(hypotheses)} hypotheses. "
                                    f"Knowledge graph: {graph_data.get('stats', {}).get('total_nodes', 0)} nodes"}],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7. PAPER ANALYZER AGENT — Deep per-paper analysis (no hallucination)
+#    Works with uploaded PDFs and pasted text/abstracts.
+#    Uses temperature=0.1 and strictly grounds output in provided text.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# How many characters of full_text to send to the LLM per paper.
+# ~8000 chars ≈ ~2000 tokens — enough for a dense paper abstract+body.
+_MAX_PAPER_CHARS = 8000
+
+ANALYZER_SYSTEM = """You are a precise academic paper analyst. You will be given the FULL TEXT of a research paper.
+
+Your task: analyze ONLY what is written in the paper. Do NOT add outside knowledge, do NOT invent claims, do NOT hallucinate.
+
+Return a valid JSON object with these exact keys:
+{
+  "title": "<inferred or given title>",
+  "summary": "<3 to 5 solid paragraphs summarizing the paper accurately, covering: problem statement, proposed approach, experiments, results, and conclusions>",
+  "advantages": ["<specific strength 1>", "<specific strength 2>", ...],
+  "disadvantages": ["<specific limitation 1>", "<specific limitation 2>", ...],
+  "key_findings": ["<finding 1>", "<finding 2>", "<finding 3>", ...],
+  "methodology": "<1-2 sentences describing the methodology or approach used>"
+}
+
+Rules you MUST follow:
+- Every claim must come directly from the paper text provided.
+- If the paper does not clearly state something, do NOT include it.
+- advantages = real contributions/strengths explicitly mentioned in the paper.
+- disadvantages = explicit limitations, future work, weaknesses, or gaps acknowledged in the paper.
+- key_findings = 3-6 specific, concrete findings with numbers/results if available.
+- Do NOT wrap in markdown code blocks. Return pure JSON only."""
+
+
+async def _analyze_single_paper(paper: dict) -> dict:
+    """Analyze one paper and return a PaperAnalysis dict."""
+    title     = paper.get("title", "Untitled Paper")
+    full_text = paper.get("full_text", "")
+    filename  = paper.get("filename", "manual_input")
+    source_type = paper.get("source_type", "text")
+
+    # Truncate to avoid token overflow — keep intro + conclusion area
+    text_for_llm = full_text[:_MAX_PAPER_CHARS]
+    if len(full_text) > _MAX_PAPER_CHARS:
+        # Also append the last 1000 chars (often conclusion/references area)
+        text_for_llm += "\n\n...[middle sections omitted]...\n\n" + full_text[-1000:]
+
+    user = f"""Title (if known): {title}
+
+--- PAPER TEXT START ---
+{text_for_llm}
+--- PAPER TEXT END ---
+
+Analyze this paper strictly based on the text above."""
+
+    raw = await _groq(ANALYZER_SYSTEM, user, max_tokens=2500, temperature=0.1)
+
+    # Parse JSON response
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        parts   = cleaned.split("```")
+        cleaned = parts[1] if len(parts) > 1 else cleaned
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:]
+        cleaned = cleaned.strip()
+
+    try:
+        result = json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Try to find JSON object in the response
+        start = cleaned.find("{")
+        end   = cleaned.rfind("}") + 1
+        if start != -1 and end > start:
+            try:
+                result = json.loads(cleaned[start:end])
+            except Exception:
+                result = {}
+        else:
+            result = {}
+
+    # Ensure all fields present with fallbacks
+    return {
+        "title":          result.get("title", title),
+        "summary":        result.get("summary", "Analysis could not be generated."),
+        "advantages":     result.get("advantages", []),
+        "disadvantages":  result.get("disadvantages", []),
+        "key_findings":   result.get("key_findings", []),
+        "methodology":    result.get("methodology", ""),
+        "source_type":    source_type,
+        "filename":       filename,
+    }
+
+
+async def paper_analyzer_agent(state: AgentState) -> dict:
+    """
+    Analyze each uploaded paper one by one.
+    Produces a list of PaperAnalysis objects — one per paper.
+    Uses strict grounding prompts to prevent hallucination.
+    """
+    uploaded = state.get("uploaded_papers", [])
+    if not uploaded:
+        return {
+            "paper_analyses": [],
+            "status":         "analysis_complete",
+            "messages":       [{"role": "paper_analyzer_agent",
+                                "content": "No papers provided for analysis."}],
+        }
+
+    logger.info("[PaperAnalyzer] Analyzing %d papers sequentially", len(uploaded))
+
+    analyses = []
+    for i, paper in enumerate(uploaded):
+        logger.info("[PaperAnalyzer] Analyzing paper %d/%d: %s", i + 1, len(uploaded), paper.get("title", "?"))
+        try:
+            analysis = await _analyze_single_paper(paper)
+            analyses.append(analysis)
+        except Exception as e:
+            logger.error("[PaperAnalyzer] Failed to analyze paper %d: %s", i + 1, e)
+            analyses.append({
+                "title":         paper.get("title", f"Paper {i+1}"),
+                "summary":       f"Analysis failed: {str(e)}",
+                "advantages":    [],
+                "disadvantages": [],
+                "key_findings":  [],
+                "methodology":   "",
+                "source_type":   paper.get("source_type", "text"),
+                "filename":      paper.get("filename", "unknown"),
+            })
+
+    return {
+        "paper_analyses": analyses,
+        "status":         "analysis_complete",
+        "messages":       [{"role": "paper_analyzer_agent",
+                            "content": f"Analyzed {len(analyses)} papers successfully."}],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. COMPARATIVE ANALYZER AGENT — Cross-paper comparison
+#    Only runs after all papers are analyzed individually.
+# ═══════════════════════════════════════════════════════════════════════════════
+async def comparative_analyzer_agent(state: AgentState) -> dict:
+    """
+    Generate a comparative analysis across all analyzed papers.
+    Identifies agreements, contradictions, best contributions, and overall conclusion.
+    """
+    analyses = state.get("paper_analyses", [])
+    if not analyses:
+        return {
+            "comparative_analysis": "No papers were analyzed.",
+            "status":               "comparison_complete",
+            "messages":             [{"role": "comparative_analyzer_agent",
+                                      "content": "No analyses to compare."}],
+        }
+
+    if len(analyses) == 1:
+        # Only one paper — no cross-comparison needed
+        return {
+            "comparative_analysis": (
+                f"Only one paper was provided. See the individual analysis above for "
+                f"a complete breakdown of **{analyses[0]['title']}**."
+            ),
+            "status":   "comparison_complete",
+            "messages": [{"role": "comparative_analyzer_agent",
+                          "content": "Single paper — no cross-paper comparison needed."}],
+        }
+
+    # Build a structured summary of each paper for the LLM
+    summaries = []
+    for i, a in enumerate(analyses, 1):
+        adv  = "\n    - ".join(a.get("advantages", [])[:4]) or "None listed"
+        dis  = "\n    - ".join(a.get("disadvantages", [])[:4]) or "None listed"
+        find = "\n    - ".join(a.get("key_findings", [])[:4]) or "None listed"
+        summaries.append(
+            f"**Paper {i}: {a['title']}**\n"
+            f"  Methodology: {a.get('methodology', 'N/A')}\n"
+            f"  Key Findings:\n    - {find}\n"
+            f"  Advantages:\n    - {adv}\n"
+            f"  Disadvantages:\n    - {dis}"
+        )
+
+    system = """You are an expert academic reviewer performing a comparative analysis of multiple research papers.
+
+Based ONLY on the paper summaries provided, write a structured Markdown comparative analysis with these exact sections:
+
+## Overview
+Brief overview of all papers and their common theme/domain.
+
+## Key Agreements
+What findings, methods, or conclusions do the papers agree on?
+
+## Contradictions & Debates
+Where do the papers disagree or present conflicting evidence?
+
+## Comparative Strengths
+How do the papers compare in terms of methodology, rigor, and contribution?
+
+## Comparative Weaknesses
+Common limitations or gaps shared across the papers.
+
+## Overall Conclusion
+Which paper(s) make the strongest contribution and why? What does the collection of papers tell us together?
+
+Be precise, cite paper titles directly, and do NOT add external knowledge."""
+
+    user = (
+        f"Number of papers: {len(analyses)}\n\n"
+        + "\n\n---\n\n".join(summaries)
+    )
+
+    comparison = await _groq(system, user, max_tokens=3000, temperature=0.1)
+
+    return {
+        "comparative_analysis": comparison,
+        "status":               "comparison_complete",
+        "messages":             [{"role": "comparative_analyzer_agent",
+                                  "content": f"Comparative analysis complete across {len(analyses)} papers."}],
     }

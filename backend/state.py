@@ -30,14 +30,28 @@ class Hypothesis(TypedDict):
     confidence: float
 
 
-class FactCheck(TypedDict):
-    claim: str
-    status: str          # "verified", "unverified", "contradicted"
-    evidence: str
-    source_paper: str
+class UploadedPaper(TypedDict):
+    """A paper provided directly by the user (PDF bytes decoded or pasted text)."""
+    title: str
+    full_text: str       # Full extracted text from PDF or pasted content
+    source_type: str     # "pdf" | "text"
+    filename: str        # Original filename or "manual_input"
+
+
+class PaperAnalysis(TypedDict):
+    """Per-paper analysis result from the paper_analyzer_agent."""
+    title: str
+    summary: str                  # Detailed 3-5 paragraph summary
+    advantages: list[str]         # Key contributions / strengths
+    disadvantages: list[str]      # Limitations / weaknesses / gaps
+    key_findings: list[str]       # Bullet-point key findings
+    methodology: str              # Brief methodology description
+    source_type: str              # "pdf" | "text"
+    filename: str
 
 
 class AgentState(TypedDict, total=False):
+    # ── Query-based research fields ──────────────────────────────────────
     query: str
     research_plan: str
     papers: Annotated[list[Paper], operator.add]
@@ -45,7 +59,6 @@ class AgentState(TypedDict, total=False):
     hypotheses: Annotated[list[Hypothesis], operator.add]
     messages: Annotated[list[dict], operator.add]
     chunks: Annotated[list[dict], operator.add]
-    fact_check_results: Annotated[list[FactCheck], operator.add]
     topics: Annotated[list[str], operator.add]
     synthesis: Optional[str]
     report: Optional[str]
@@ -54,3 +67,8 @@ class AgentState(TypedDict, total=False):
     iteration: int
     pdf_processed_count: int
     status: str
+
+    # ── Paper analyzer mode fields ────────────────────────────────────────
+    uploaded_papers: list[UploadedPaper]          # Raw inputs from user
+    paper_analyses: list[PaperAnalysis]           # Per-paper LLM analysis
+    comparative_analysis: Optional[str]           # Final cross-paper comparison

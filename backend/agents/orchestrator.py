@@ -1,8 +1,8 @@
 """
-LangGraph orchestrator — 7-agent pipeline with confidence-based feedback loop.
+LangGraph orchestrator — 6-agent pipeline with confidence-based feedback loop.
 
 Flow:
-  START → planner → search → critic → synthesis → [loop?] → writer → fact_checker → hypothesis → END
+  START → planner → search → critic → synthesis → [loop?] → writer → hypothesis → END
 
 - Threshold: 0.75 (realistic target)
 - MAX_ITER: 2 (max 2 retries then ALWAYS proceeds)
@@ -18,8 +18,9 @@ from backend.agents.specialist_agents import (
     critic_agent,
     synthesis_agent,
     writer_agent,
-    fact_checker_agent,
     hypothesis_agent,
+    paper_analyzer_agent,
+    comparative_analyzer_agent,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,14 +58,13 @@ async def increment_iteration(state: AgentState) -> dict:
 def build_graph():
     g = StateGraph(AgentState)
 
-    # Add all 7 agent nodes + loop increment
+    # Add all 6 research agent nodes + loop increment
     g.add_node("planner",        planner_agent)
     g.add_node("search",         search_agent)
     g.add_node("critic",         critic_agent)
     g.add_node("synthesis",      synthesis_agent)
     g.add_node("loop_increment", increment_iteration)
     g.add_node("writer",         writer_agent)
-    g.add_node("fact_checker",   fact_checker_agent)
     g.add_node("hypothesis",     hypothesis_agent)
 
     # Define the flow
@@ -78,8 +78,7 @@ def build_graph():
         {"loop": "loop_increment", "continue": "writer"},
     )
     g.add_edge("loop_increment", "search")
-    g.add_edge("writer", "fact_checker")
-    g.add_edge("fact_checker", "hypothesis")
+    g.add_edge("writer", "hypothesis")
     g.add_edge("hypothesis", END)
 
     return g.compile()
@@ -97,7 +96,6 @@ async def run_research(query: str) -> AgentState:
         "hypotheses":         [],
         "messages":           [],
         "chunks":             [],
-        "fact_check_results": [],
         "topics":             [],
         "synthesis":          None,
         "report":             None,
@@ -108,3 +106,36 @@ async def run_research(query: str) -> AgentState:
         "status":             "starting",
     }
     return await research_graph.ainvoke(initial)
+
+
+# ── Paper Analyzer Graph ───────────────────────────────────────────────────────
+def build_analyzer_graph():
+    """
+    Simple 2-node pipeline for analyzing user-provided papers (PDFs / pasted text).
+    START → paper_analyzer → comparative_analyzer → END
+    No web search, no loops, no knowledge graph.
+    """
+    g = StateGraph(AgentState)
+    g.add_node("paper_analyzer",       paper_analyzer_agent)
+    g.add_node("comparative_analyzer", comparative_analyzer_agent)
+
+    g.add_edge(START,               "paper_analyzer")
+    g.add_edge("paper_analyzer",    "comparative_analyzer")
+    g.add_edge("comparative_analyzer", END)
+
+    return g.compile()
+
+
+analyzer_graph = build_analyzer_graph()
+
+
+async def analyze_papers(uploaded_papers: list[dict]) -> AgentState:
+    """Entry point for the paper analyzer pipeline."""
+    initial: AgentState = {
+        "uploaded_papers":      uploaded_papers,
+        "paper_analyses":       [],
+        "comparative_analysis": None,
+        "messages":             [],
+        "status":               "analyzing",
+    }
+    return await analyzer_graph.ainvoke(initial)

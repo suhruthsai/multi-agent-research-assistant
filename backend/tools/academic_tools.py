@@ -21,7 +21,7 @@ CR_BASE  = "https://api.crossref.org/works"
 # ── Semantic Scholar ──────────────────────────────────────────────────────────
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=5, max=30))
 async def search_semantic_scholar(query: str, limit: int = 15) -> list[dict]:
-    fields = "title,abstract,authors,year,citationCount,url,referenceCount"
+    fields = "paperId,title,abstract,authors,year,citationCount,url,referenceCount,references.paperId,references.title,references.url"
     async with httpx.AsyncClient(timeout=20) as c:
         r = await c.get(
             f"{SS_BASE}/paper/search",
@@ -40,6 +40,7 @@ async def search_semantic_scholar(query: str, limit: int = 15) -> list[dict]:
         if len(abstract.split()) < 30:
             continue
         papers.append({
+            "semantic_id":      p.get("paperId") or "",
             "title":           p.get("title", ""),
             "abstract":        abstract,
             "authors":         [a["name"] for a in p.get("authors", [])],
@@ -47,6 +48,14 @@ async def search_semantic_scholar(query: str, limit: int = 15) -> list[dict]:
             "url":             p.get("url") or "",
             "source":          "semantic_scholar",
             "citation_count":  p.get("citationCount") or 0,
+            "references":      [
+                {
+                    "semantic_id": ref.get("paperId") or "",
+                    "title":       ref.get("title") or "",
+                    "url":         ref.get("url") or "",
+                }
+                for ref in p.get("references", [])[:100]
+            ],
             "relevance_score": 0.0,
         })
     return papers
@@ -67,6 +76,7 @@ async def search_arxiv(query: str, max_results: int = 15) -> list[dict]:
             if len(abstract.split()) < 30:
                 continue
             results.append({
+                "semantic_id":     "",
                 "title":          r.title,
                 "abstract":       abstract,
                 "authors":        [str(a) for a in r.authors],
@@ -74,6 +84,7 @@ async def search_arxiv(query: str, max_results: int = 15) -> list[dict]:
                 "url":            r.entry_id,
                 "source":         "arxiv",
                 "citation_count": 0,
+                "references":     [],
                 "relevance_score": 0.0,
             })
         return results
@@ -90,7 +101,7 @@ async def search_openalex(query: str, limit: int = 15) -> list[dict]:
                 params={
                     "search":      query,
                     "per-page":    limit,
-                    "select":      "title,abstract_inverted_index,authorships,publication_year,cited_by_count,doi",
+                "select":      "title,abstract_inverted_index,authorships,publication_year,cited_by_count,doi",
                     "mailto":      "research@mara.ai",  # polite pool = faster responses
                 },
             )
@@ -122,6 +133,7 @@ async def search_openalex(query: str, limit: int = 15) -> list[dict]:
             url = f"https://doi.org/{doi.replace('https://doi.org/', '')}" if doi else ""
 
             papers.append({
+                "semantic_id":     "",
                 "title":          title,
                 "abstract":       abstract,
                 "authors":        [a for a in authors if a],
@@ -129,6 +141,7 @@ async def search_openalex(query: str, limit: int = 15) -> list[dict]:
                 "url":            url,
                 "source":         "openalex",
                 "citation_count": w.get("cited_by_count") or 0,
+                "references":     [],
                 "relevance_score": 0.0,
             })
         return papers
@@ -174,6 +187,7 @@ async def search_crossref(query: str, limit: int = 10) -> list[dict]:
             doi  = item.get("DOI", "")
 
             papers.append({
+                "semantic_id":     "",
                 "title":          title,
                 "abstract":       abstract,
                 "authors":        [a for a in authors if a],
@@ -181,6 +195,7 @@ async def search_crossref(query: str, limit: int = 10) -> list[dict]:
                 "url":            f"https://doi.org/{doi}" if doi else "",
                 "source":         "crossref",
                 "citation_count": item.get("is-referenced-by-count") or 0,
+                "references":     [],
                 "relevance_score": 0.0,
             })
         return papers

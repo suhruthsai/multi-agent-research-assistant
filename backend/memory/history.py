@@ -30,7 +30,6 @@ def _get_conn() -> sqlite3.Connection:
             research_plan  TEXT,
             hypotheses     TEXT,   -- JSON
             papers         TEXT,   -- JSON
-            fact_check_results TEXT, -- JSON
             graph_data     TEXT,   -- JSON
             topics         TEXT,   -- JSON
             confidence_score REAL DEFAULT 0.0,
@@ -53,9 +52,9 @@ def save_report(data: dict) -> str:
         conn.execute(
             """INSERT INTO research_history
                (id, query, report, synthesis, research_plan,
-                hypotheses, papers, fact_check_results, graph_data,
+                hypotheses, papers, graph_data,
                 topics, confidence_score, pdf_processed_count, paper_count, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 report_id,
                 data.get("query", ""),
@@ -64,7 +63,6 @@ def save_report(data: dict) -> str:
                 data.get("research_plan", ""),
                 json.dumps(data.get("hypotheses", [])),
                 json.dumps(data.get("papers", [])),
-                json.dumps(data.get("fact_check_results", [])),
                 json.dumps(data.get("graph_data")),
                 json.dumps(data.get("topics", [])),
                 data.get("confidence_score", 0.0),
@@ -109,7 +107,7 @@ def get_report(report_id: str) -> dict | None:
 
         d = dict(row)
         # Parse JSON fields back
-        for field in ("hypotheses", "papers", "fact_check_results", "topics"):
+        for field in ("hypotheses", "papers", "topics"):
             try:
                 d[field] = json.loads(d[field]) if d[field] else []
             except (json.JSONDecodeError, TypeError):

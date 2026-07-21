@@ -1,12 +1,14 @@
 "use client";
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Search, Sparkles, X, Zap, Brain, BookOpen, Network, Shield, History } from "lucide-react";
+import { Search, Sparkles, X, Zap, Brain, BookOpen, Network, History, Upload } from "lucide-react";
 import AgentStatusPanel, { AgentStep } from "@/components/AgentStatusPanel";
-import ReportViewer, { Paper, Hypothesis, FactCheck, GraphData } from "@/components/ReportViewer";
+import ReportViewer, { Paper, Hypothesis, GraphData } from "@/components/ReportViewer";
 import CitationSidebar from "@/components/CitationSidebar";
 import HistorySidebar from "@/components/HistorySidebar";
+import PaperAnalyzer from "@/components/PaperAnalyzer";
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000/ws/research";
+const API_KEY = process.env.NEXT_PUBLIC_MARA_API_KEY ?? "";
 
 const EXAMPLES = [
   "Transformer attention mechanisms in NLP",
@@ -19,10 +21,9 @@ const EXAMPLES = [
 
 const FEATURES = [
   { icon: <Zap className="w-5 h-5" />, title: "Hybrid RAG", desc: "BM25 + Semantic + Re-ranking" },
-  { icon: <Brain className="w-5 h-5" />, title: "7 AI Agents", desc: "Specialized research pipeline" },
+  { icon: <Brain className="w-5 h-5" />, title: "6 AI Agents", desc: "Specialized research pipeline" },
   { icon: <BookOpen className="w-5 h-5" />, title: "Full-Text PDFs", desc: "Deep paper analysis" },
   { icon: <Network className="w-5 h-5" />, title: "Knowledge Graph", desc: "Paper relationship mapping" },
-  { icon: <Shield className="w-5 h-5" />, title: "Fact Checker", desc: "Claim verification" },
 ];
 
 type FinalResult = {
@@ -31,14 +32,16 @@ type FinalResult = {
   research_plan: string;
   hypotheses: Hypothesis[];
   papers: Paper[];
-  fact_check_results: FactCheck[];
   graph_data: GraphData | null;
   confidence_score: number;
   pdf_processed_count: number;
   topics: string[];
 };
 
+type AppMode = "search" | "analyze";
+
 export default function HomePage() {
+  const [mode, setMode]           = useState<AppMode>("search");
   const [query, setQuery]         = useState("");
   const [steps, setSteps]         = useState<AgentStep[]>([]);
   const [result, setResult]       = useState<FinalResult | null>(null);
@@ -91,7 +94,7 @@ export default function HomePage() {
       }
     }, 8 * 60 * 1000);
 
-    ws.onopen = () => ws.send(JSON.stringify({ query: query.trim() }));
+    ws.onopen = () => ws.send(JSON.stringify({ query: query.trim(), api_key: API_KEY || undefined }));
 
     ws.onmessage = (e) => {
       const data = JSON.parse(e.data);
@@ -110,7 +113,6 @@ export default function HomePage() {
           research_plan:      data.research_plan ?? "",
           hypotheses:         data.hypotheses ?? [],
           papers:             data.papers ?? [],
-          fact_check_results: data.fact_check_results ?? [],
           graph_data:         data.graph_data ?? null,
           confidence_score:   data.confidence_score ?? 0,
           pdf_processed_count: data.pdf_processed_count ?? 0,
@@ -156,7 +158,6 @@ export default function HomePage() {
       research_plan:      data.research_plan ?? "",
       hypotheses:         data.hypotheses ?? [],
       papers:             data.papers ?? [],
-      fact_check_results: data.fact_check_results ?? [],
       graph_data:         data.graph_data ?? null,
       confidence_score:   data.confidence_score ?? 0,
       pdf_processed_count: data.pdf_processed_count ?? 0,
@@ -184,6 +185,33 @@ export default function HomePage() {
               <p className="text-[10px] text-gray-600 -mt-0.5">Multi-Agent Research Assistant</p>
             </div>
           </div>
+
+          {/* ── Mode Switcher ─────────────────────────────────────────────── */}
+          <div className="flex items-center gap-1 p-1 bg-gray-900/60 border border-gray-800/50 rounded-xl">
+            <button
+              onClick={() => setMode("search")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
+                mode === "search"
+                  ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
+                  : "text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              <Search className="w-3.5 h-3.5" />
+              Search Papers
+            </button>
+            <button
+              onClick={() => setMode("analyze")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
+                mode === "analyze"
+                  ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                  : "text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              <Upload className="w-3.5 h-3.5" />
+              Analyze Papers
+            </button>
+          </div>
+
           <div className="flex items-center gap-3">
             <button
               onClick={() => setHistoryOpen(true)}
@@ -210,12 +238,36 @@ export default function HomePage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
+
+        {/* ── Analyze Papers Mode ─────────────────────────────────────────── */}
+        {mode === "analyze" && (
+          <div className="max-w-4xl mx-auto">
+            <div className="text-center mb-8 animate-fade-in">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-400 text-xs font-medium mb-4">
+                <Upload className="w-3 h-3" />
+                Upload · Analyze · Compare
+              </div>
+              <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight mb-3">
+                <span className="gradient-text">Analyze Your Papers</span>
+              </h2>
+              <p className="text-gray-500 max-w-lg mx-auto text-sm leading-relaxed">
+                Upload your own research PDFs or paste abstracts. Each paper gets an accurate
+                summary, advantages, and disadvantages — grounded strictly in the paper text.
+              </p>
+            </div>
+            <PaperAnalyzer />
+          </div>
+        )}
+
+        {/* ── Search Mode ──────────────────────────────────────────────────── */}
+        {mode === "search" && (
+          <>
         {/* ── Hero (no activity) ───────────────────────────────────────────── */}
         {!hasActivity && (
           <div className="text-center pt-16 pb-10 animate-fade-in">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-medium mb-6">
               <Sparkles className="w-3 h-3" />
-              7 Specialist AI Agents · Hybrid RAG · Knowledge Graph
+              6 Specialist AI Agents · Hybrid RAG · Knowledge Graph
             </div>
             <h2 className="text-4xl sm:text-5xl font-extrabold tracking-tight mb-4">
               <span className="gradient-text">Research Anything</span>
@@ -384,13 +436,9 @@ export default function HomePage() {
               {result ? (
                 <ReportViewer
                   report={result.report}
-                  synthesis={result.synthesis}
-                  research_plan={result.research_plan}
                   hypotheses={result.hypotheses}
                   papers={result.papers}
-                  fact_check_results={result.fact_check_results}
                   graph_data={result.graph_data}
-                  confidence_score={result.confidence_score}
                   onCitationClick={(paper) => setSidebarPaper(paper)}
                 />
               ) : (
@@ -415,6 +463,8 @@ export default function HomePage() {
               )}
             </div>
           </div>
+        )}
+          </>
         )}
       </main>
 

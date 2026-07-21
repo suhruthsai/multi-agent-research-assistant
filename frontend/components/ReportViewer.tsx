@@ -10,8 +10,6 @@ import {
   FlaskConical,
   BookOpen,
   Network,
-  ShieldCheck,
-  ClipboardList,
   ExternalLink,
 } from "lucide-react";
 
@@ -34,13 +32,6 @@ export type Hypothesis = {
   methodology_hint?: string;
 };
 
-export type FactCheck = {
-  claim: string;
-  status: string;
-  evidence: string;
-  source_paper: string;
-};
-
 export type GraphData = {
   nodes: { id: string; label: string; type: string; year?: number; citation_count?: number }[];
   links: { source: string; target: string; type: string }[];
@@ -53,17 +44,20 @@ export type GraphData = {
   };
 };
 
-type Tab = "report" | "hypotheses" | "papers" | "graph" | "factcheck" | "plan";
+type Tab = "report" | "hypotheses" | "papers" | "graph";
+type ExportFormat = "pdf" | "docx";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_KEY = process.env.NEXT_PUBLIC_MARA_API_KEY ?? "";
+
+const authHeaders = () =>
+  API_KEY ? { "X-MARA-API-Key": API_KEY } : {};
 
 interface Props {
   report: string;
-  synthesis: string;
-  research_plan: string;
   hypotheses: Hypothesis[];
   papers: Paper[];
-  fact_check_results: FactCheck[];
   graph_data: GraphData | null;
-  confidence_score: number;
   onCitationClick?: (paper: Paper) => void;
 }
 
@@ -85,23 +79,17 @@ function SourceBadge({ source }: { source: string }) {
 /* ── Main Component ───────────────────────────────────────────────────────── */
 export default function ReportViewer({
   report,
-  synthesis,
-  research_plan,
   hypotheses,
   papers,
-  fact_check_results,
   graph_data,
-  confidence_score,
   onCitationClick,
 }: Props) {
   const [tab, setTab]       = useState<Tab>("report");
   const [copied, setCopied] = useState(false);
-  const [expandedFc, setExpandedFc] = useState<number | null>(null);
+  const [exporting, setExporting] = useState<ExportFormat | null>(null);
 
   // Lazy import for KnowledgeGraphView
   const KnowledgeGraphView = require("./KnowledgeGraphView").default;
-  const FactCheckPanel     = require("./FactCheckPanel").default;
-  const ResearchPlanView   = require("./ResearchPlanView").default;
 
   const copyReport = useCallback(() => {
     navigator.clipboard.writeText(report);
@@ -124,22 +112,42 @@ export default function ReportViewer({
     URL.revokeObjectURL(url);
   }, [report]);
 
-  /* ── Process report to make citations clickable ────────────────────────── */
-  const processReport = (text: string): string => {
-    // Find [Author et al., Year] patterns and wrap them
-    return text.replace(
-      /\[([A-Z][a-z]+(?:\s+et\s+al\.)?(?:,?\s*\d{4})?)\]/g,
-      (match, citation) => `<span class="citation-link" data-citation="${citation}">${match}</span>`
-    );
-  };
+  const exportReport = useCallback(async (format: ExportFormat) => {
+    setExporting(format);
+    try {
+      const firstLine = report.split("\n").find((l) => l.trim().length > 0) || "research-report";
+      const res = await fetch(`${API_URL}/export-report/${format}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(),
+        },
+        body: JSON.stringify({
+          markdown: report,
+          title: firstLine.replace(/^#+\s*/, ""),
+        }),
+      });
+      if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const safeName = firstLine.replace(/^#+\s*/, "").replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-").slice(0, 60);
+      a.href = url;
+      a.download = `${safeName || "research-report"}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(null);
+    }
+  }, [report]);
 
   const tabs: { key: Tab; label: string; icon: React.ReactNode; count?: number }[] = [
     { key: "report",    label: "Report",      icon: <FileText className="w-3.5 h-3.5" /> },
     { key: "hypotheses",label: "Hypotheses",   icon: <FlaskConical className="w-3.5 h-3.5" />, count: hypotheses.length },
     { key: "papers",    label: "Papers",       icon: <BookOpen className="w-3.5 h-3.5" />,     count: papers.length },
-    { key: "factcheck", label: "Fact Check",   icon: <ShieldCheck className="w-3.5 h-3.5" />,  count: fact_check_results.length },
     { key: "graph",     label: "Graph",        icon: <Network className="w-3.5 h-3.5" /> },
-    { key: "plan",      label: "Plan",         icon: <ClipboardList className="w-3.5 h-3.5" /> },
   ];
 
   return (
@@ -174,6 +182,24 @@ export default function ReportViewer({
             >
               <Download className="w-3.5 h-3.5" />
               Download
+            </button>
+            <button
+              onClick={() => exportReport("pdf")}
+              disabled={exporting !== null}
+              className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 disabled:opacity-50 transition-colors px-2 py-1"
+              title="Export as PDF"
+            >
+              <Download className="w-3.5 h-3.5" />
+              {exporting === "pdf" ? "PDF..." : "PDF"}
+            </button>
+            <button
+              onClick={() => exportReport("docx")}
+              disabled={exporting !== null}
+              className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 disabled:opacity-50 transition-colors px-2 py-1"
+              title="Export as DOCX"
+            >
+              <Download className="w-3.5 h-3.5" />
+              {exporting === "docx" ? "DOCX..." : "DOCX"}
             </button>
             <button
               onClick={copyReport}
@@ -303,20 +329,11 @@ export default function ReportViewer({
           </div>
         )}
 
-        {/* ── Fact Check Tab ──────────────────────────────────────────────── */}
-        {tab === "factcheck" && (
-          <FactCheckPanel results={fact_check_results} />
-        )}
-
         {/* ── Knowledge Graph Tab ─────────────────────────────────────────── */}
         {tab === "graph" && (
           <KnowledgeGraphView data={graph_data} />
         )}
 
-        {/* ── Research Plan Tab ───────────────────────────────────────────── */}
-        {tab === "plan" && (
-          <ResearchPlanView plan={research_plan} />
-        )}
       </div>
     </div>
   );

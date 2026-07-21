@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_KEY = process.env.NEXT_PUBLIC_MARA_API_KEY ?? "";
+const authHeaders = () => API_KEY ? { "X-MARA-API-Key": API_KEY } : {};
 
 type HistoryItem = {
   id: string;
@@ -40,7 +42,7 @@ export default function HistorySidebar({
   useEffect(() => {
     if (!isOpen) return;
     setLoading(true);
-    fetch(`${API_URL}/history`)
+    fetch(`${API_URL}/history`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((data) => setItems(data))
       .catch((err) => console.error("Failed to fetch history:", err))
@@ -61,7 +63,7 @@ export default function HistorySidebar({
     async (id: string) => {
       setLoadingId(id);
       try {
-        const res = await fetch(`${API_URL}/history/${id}`);
+        const res = await fetch(`${API_URL}/history/${id}`, { headers: authHeaders() });
         if (!res.ok) throw new Error("Not found");
         const data = await res.json();
         onLoadReport(data);
@@ -80,7 +82,7 @@ export default function HistorySidebar({
     async (id: string, e: React.MouseEvent) => {
       e.stopPropagation();
       try {
-        await fetch(`${API_URL}/history/${id}`, { method: "DELETE" });
+        await fetch(`${API_URL}/history/${id}`, { method: "DELETE", headers: authHeaders() });
         setItems((prev) => prev.filter((item) => item.id !== id));
       } catch (err) {
         console.error("Failed to delete report:", err);

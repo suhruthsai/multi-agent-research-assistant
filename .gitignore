@@ -53,4 +53,19 @@ out/
 
 # Database
 *.sqlite3
+*.db
 chroma_db/
+
+# Logs
+*.log
+
+# Build artifacts
+*.tar
+sample-without-docker/
+frontend/tsconfig.tsbuildinfo
+
+# Docker (not used)
+Dockerfile
+.dockerignore
+docker-entrypoint.sh
+.env.docker.example

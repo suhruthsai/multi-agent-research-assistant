@@ -1,6 +1,6 @@
 "use client";
 import { useRef, useEffect, useState, useCallback } from "react";
-import { Network } from "lucide-react";
+import { ExternalLink, Network, X } from "lucide-react";
 
 /* ── Types ──────────────────────────────────────────────── */
 type GraphNode = {
@@ -9,8 +9,16 @@ type GraphNode = {
   type: string;
   year?: number;
   citation_count?: number;
+  title?: string;
+  name?: string;
+  source?: string;
+  abstract?: string;
+  authors?: string[];
+  url?: string;
+  relevance_score?: number;
+  topics?: string[];
 };
-type GraphLink = { source: string; target: string; type: string };
+type GraphLink = { source: string; target: string; type: string; weight?: number; reason?: string };
 type GraphData = {
   nodes: GraphNode[];
   links: GraphLink[];
@@ -32,11 +40,13 @@ const NODE_COLORS: Record<string, string> = {
   paper: "#6366f1",
   author: "#10b981",
   topic: "#a855f7",
+  cluster: "#22d3ee",
 };
 const NODE_SIZES: Record<string, number> = {
   paper: 8,
   author: 6,
   topic: 7,
+  cluster: 10,
 };
 const CANVAS_HEIGHT = 400;
 
@@ -51,6 +61,7 @@ interface SimNode {
   vy: number;
   r: number;
   color: string;
+  data: GraphNode;
 }
 interface SimLink {
   source: SimNode;
@@ -65,9 +76,10 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
   const nodesRef = useRef<SimNode[]>([]);
   const linksRef = useRef<SimLink[]>([]);
   const panRef = useRef({ x: 0, y: 0 });
-  const dragRef = useRef({ dragging: false, lastX: 0, lastY: 0 });
+  const dragRef = useRef({ dragging: false, moved: false, lastX: 0, lastY: 0 });
   const hoverRef = useRef<SimNode | null>(null);
   const [tooltip, setTooltip] = useState<{ label: string; x: number; y: number } | null>(null);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
 
   const isEmpty = !data || data.nodes.length === 0;
 
@@ -87,6 +99,7 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
         vy: 0,
         r: NODE_SIZES[n.type] ?? 6,
         color: NODE_COLORS[n.type] ?? "#6b7280",
+        data: n,
       };
       nodeMap.set(n.id, sn);
     });
@@ -167,10 +180,17 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
     ctx.translate(px, py);
 
     // Links
-    ctx.lineWidth = 1;
     for (const link of linksRef.current) {
       ctx.beginPath();
-      ctx.strokeStyle = "rgba(99, 102, 241, 0.12)";
+      ctx.lineWidth = link.type === "cites" ? 1.8 : link.type === "similar_to" ? 1.2 : 1;
+      ctx.strokeStyle =
+        link.type === "cites"
+          ? "rgba(34, 211, 238, 0.45)"
+          : link.type === "similar_to"
+          ? "rgba(168, 85, 247, 0.28)"
+          : link.type === "in_cluster"
+          ? "rgba(34, 211, 238, 0.22)"
+          : "rgba(99, 102, 241, 0.12)";
       ctx.moveTo(link.source.x, link.source.y);
       ctx.lineTo(link.target.x, link.target.y);
       ctx.stroke();
@@ -190,11 +210,16 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
         ctx.lineWidth = 2;
         ctx.stroke();
       }
+      if (selectedNode?.id === n.id) {
+        ctx.strokeStyle = "#22d3ee";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
       ctx.globalAlpha = 1;
     }
 
     ctx.restore();
-  }, []);
+  }, [selectedNode]);
 
   /* ── Animation loop ─────────────────────────────────────── */
   const loop = useCallback(
@@ -239,8 +264,11 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
 
     // Drag
     if (dragRef.current.dragging) {
-      panRef.current.x += e.clientX - dragRef.current.lastX;
-      panRef.current.y += e.clientY - dragRef.current.lastY;
+      const dx = e.clientX - dragRef.current.lastX;
+      const dy = e.clientY - dragRef.current.lastY;
+      if (Math.abs(dx) + Math.abs(dy) > 2) dragRef.current.moved = true;
+      panRef.current.x += dx;
+      panRef.current.y += dy;
       dragRef.current.lastX = e.clientX;
       dragRef.current.lastY = e.clientY;
       return;
@@ -265,10 +293,13 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
   }, []);
 
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    dragRef.current = { dragging: true, lastX: e.clientX, lastY: e.clientY };
+    dragRef.current = { dragging: true, moved: false, lastX: e.clientX, lastY: e.clientY };
   }, []);
 
   const handleMouseUp = useCallback(() => {
+    if (!dragRef.current.moved && hoverRef.current) {
+      setSelectedNode(hoverRef.current.data);
+    }
     dragRef.current.dragging = false;
   }, []);
 
@@ -277,6 +308,10 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
     hoverRef.current = null;
     setTooltip(null);
   }, []);
+
+  const selectedLinks = selectedNode && data
+    ? data.links.filter((l) => l.source === selectedNode.id || l.target === selectedNode.id)
+    : [];
 
   /* ── Render ─────────────────────────────────────────────── */
   if (isEmpty) {
@@ -301,6 +336,7 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
       <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-800">
         <Network size={14} className="text-indigo-400" />
         <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Knowledge Graph</span>
+        <span className="ml-auto text-[11px] text-gray-600">Click any node to inspect it</span>
       </div>
 
       {/* Canvas area */}
@@ -358,6 +394,113 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
           ))}
         </div>
       </div>
+
+      {data?.stats?.edge_types && (
+        <div className="px-5 py-3 border-t border-gray-800 flex flex-wrap gap-2">
+          {Object.entries(data.stats.edge_types).map(([type, count]) => (
+            <span
+              key={type}
+              className="text-[10px] px-2 py-1 rounded-full bg-gray-950 border border-gray-800 text-gray-500"
+            >
+              {type.replace("_", " ")}: {count}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {selectedNode && (
+        <div className="border-t border-gray-800 bg-gray-950/60 p-5">
+          <div className="flex items-start gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-2">
+                <span
+                  className="w-2.5 h-2.5 rounded-full"
+                  style={{ backgroundColor: NODE_COLORS[selectedNode.type] ?? "#6b7280" }}
+                />
+                <span className="text-[10px] uppercase tracking-wider text-gray-500">
+                  {selectedNode.type}
+                </span>
+              </div>
+              <h3 className="text-sm font-semibold text-gray-100 leading-snug">
+                {selectedNode.title || selectedNode.name || selectedNode.label}
+              </h3>
+              {selectedNode.authors && selectedNode.authors.length > 0 && (
+                <p className="text-[11px] text-gray-500 mt-1">
+                  {selectedNode.authors.join(", ")}
+                  {selectedNode.year ? ` · ${selectedNode.year}` : ""}
+                </p>
+              )}
+              {selectedNode.source && (
+                <p className="text-[11px] text-indigo-400/70 mt-1">
+                  {selectedNode.source.replace("_", " ")}
+                  {selectedNode.citation_count ? ` · ${selectedNode.citation_count.toLocaleString()} citations` : ""}
+                </p>
+              )}
+            </div>
+            <button
+              onClick={() => setSelectedNode(null)}
+              className="p-1.5 rounded-lg text-gray-600 hover:text-gray-300 hover:bg-gray-800 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {selectedNode.abstract && (
+            <p className="text-xs text-gray-400 leading-relaxed mt-3 line-clamp-4">
+              {selectedNode.abstract}
+            </p>
+          )}
+
+          {selectedNode.topics && selectedNode.topics.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-3">
+              {selectedNode.topics.map((topic) => (
+                <span
+                  key={topic}
+                  className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300 border border-purple-500/20"
+                >
+                  {topic}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {selectedLinks.length > 0 && (
+            <div className="mt-4">
+              <p className="text-[10px] uppercase tracking-wider text-gray-600 mb-2">
+                Connected edges
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {selectedLinks.slice(0, 8).map((link, i) => {
+                  const otherId = link.source === selectedNode.id ? link.target : link.source;
+                  const other = data.nodes.find((n) => n.id === otherId);
+                  return (
+                    <div key={`${link.source}-${link.target}-${i}`} className="rounded-lg bg-gray-900 border border-gray-800 p-2">
+                      <p className="text-[11px] text-gray-400 truncate">
+                        {link.type.replace("_", " ")} · {other?.label || otherId}
+                      </p>
+                      {link.reason && (
+                        <p className="text-[10px] text-gray-600 mt-0.5 truncate">{link.reason}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {selectedNode.url && (
+            <a
+              href={selectedNode.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 mt-4 text-xs text-indigo-400 hover:text-indigo-300"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              Open source
+            </a>
+          )}
+        </div>
+      )}
     </div>
   );
 }

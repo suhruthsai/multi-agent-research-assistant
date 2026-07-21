@@ -4,6 +4,7 @@ separate collections for paper abstracts and full-text chunks.
 """
 
 import logging
+import json
 import re
 from typing import Optional
 
@@ -50,6 +51,15 @@ class VectorStore:
         return self._reranker
 
     # ── Paper management ──────────────────────────────────────────────────
+    def _ensure_collections(self) -> None:
+        """Re-create collection handles if they've been invalidated (e.g. by a sibling process)."""
+        self.papers_col = self.client.get_or_create_collection(
+            _PAPERS_COL, metadata={"hnsw:space": "cosine"}
+        )
+        self.chunks_col = self.client.get_or_create_collection(
+            _CHUNKS_COL, metadata={"hnsw:space": "cosine"}
+        )
+
     def add_papers(self, papers: list[dict]) -> None:
         if not papers:
             return
@@ -75,13 +85,23 @@ class VectorStore:
                 "url":            url,
                 "source":         p.get("source", "unknown"),
                 "citation_count": str(p.get("citation_count", 0)),
+                "semantic_id":     p.get("semantic_id", ""),
+                "references":      json.dumps(p.get("references", [])[:100]),
             })
 
         if not docs:
             return
 
         embs = self._embedder.encode(docs, show_progress_bar=False).tolist()
-        self.papers_col.upsert(documents=docs, ids=ids, embeddings=embs, metadatas=metas)
+        try:
+            self.papers_col.upsert(documents=docs, ids=ids, embeddings=embs, metadatas=metas)
+        except Exception as e:
+            if "does not exist" in str(e) or "NotFound" in type(e).__name__:
+                logger.warning("papers_col not found — recreating and retrying upsert")
+                self._ensure_collections()
+                self.papers_col.upsert(documents=docs, ids=ids, embeddings=embs, metadatas=metas)
+            else:
+                raise
 
         # Update BM25 index
         for doc, meta in zip(docs, metas):
@@ -112,6 +132,8 @@ class VectorStore:
                 "url":             meta["url"],
                 "source":          meta["source"],
                 "citation_count":  int(meta["citation_count"]),
+                "semantic_id":     meta.get("semantic_id", ""),
+                "references":      json.loads(meta.get("references") or "[]"),
                 "relevance_score": round(1 - dist, 4),
             })
         return sorted(papers, key=lambda x: x["relevance_score"], reverse=True)
@@ -136,6 +158,8 @@ class VectorStore:
                 "url":             meta["url"],
                 "source":          meta["source"],
                 "citation_count":  int(meta["citation_count"]),
+                "semantic_id":     meta.get("semantic_id", ""),
+                "references":      json.loads(meta.get("references") or "[]"),
                 "relevance_score": round(score, 4),
                 "_bm25_rank":      len(papers),
             })
@@ -214,7 +238,15 @@ class VectorStore:
             return
 
         embs = self._embedder.encode(docs, show_progress_bar=False).tolist()
-        self.chunks_col.upsert(documents=docs, ids=ids, embeddings=embs, metadatas=metas)
+        try:
+            self.chunks_col.upsert(documents=docs, ids=ids, embeddings=embs, metadatas=metas)
+        except Exception as e:
+            if "does not exist" in str(e) or "NotFound" in type(e).__name__:
+                logger.warning("chunks_col not found — recreating and retrying upsert")
+                self._ensure_collections()
+                self.chunks_col.upsert(documents=docs, ids=ids, embeddings=embs, metadatas=metas)
+            else:
+                raise
         logger.info("Added %d chunks to vector store", len(docs))
 
     def deep_search(self, query: str, k: int = 10) -> list[dict]:
@@ -241,14 +273,30 @@ class VectorStore:
 
     # ── Clear ─────────────────────────────────────────────────────────────
     def clear(self) -> None:
-        self.client.delete_collection(_PAPERS_COL)
-        self.client.delete_collection(_CHUNKS_COL)
-        self.papers_col = self.client.get_or_create_collection(
-            _PAPERS_COL, metadata={"hnsw:space": "cosine"}
-        )
-        self.chunks_col = self.client.get_or_create_collection(
-            _CHUNKS_COL, metadata={"hnsw:space": "cosine"}
-        )
+        """Clear all stored documents without destroying the collections.
+
+        Avoids dropping the collection entirely because sibling uvicorn worker
+        processes share the same chroma_db directory and would be left holding
+        stale handles that raise NotFoundError on the next upsert.
+        Instead, we fetch all existing IDs and delete the documents individually.
+        """
+        try:
+            paper_data = self.papers_col.get(include=[])
+            if paper_data and paper_data.get("ids"):
+                self.papers_col.delete(ids=paper_data["ids"])
+        except Exception as e:
+            logger.warning("Could not clear papers_col (may be empty): %s", e)
+            self._ensure_collections()
+
+        try:
+            chunk_data = self.chunks_col.get(include=[])
+            if chunk_data and chunk_data.get("ids"):
+                self.chunks_col.delete(ids=chunk_data["ids"])
+        except Exception as e:
+            logger.warning("Could not clear chunks_col (may be empty): %s", e)
+            self._ensure_collections()
+
         self._bm25_corpus = []
         self._bm25_meta   = []
-        self._bm25        = None
+        self._bm25        = []
+        logger.info("VectorStore cleared (documents deleted, collections preserved)")
